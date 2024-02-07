@@ -129,6 +129,7 @@ static void AddArticle(string connectionString) {
                                "VALUES (@Name, @Category, @CreationDate, @ModificationDate, @Content)";
 
     using var command = new SQLiteCommand(insertQuery, connection);
+    
     command.Parameters.AddWithValue("@Name", name);
     command.Parameters.AddWithValue("@Category", category);
     command.Parameters.AddWithValue("@CreationDate", creationDate);
