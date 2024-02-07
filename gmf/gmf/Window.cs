@@ -62,6 +62,7 @@ public class Window : RenderWindow {
     
     private float _buttonSpacing = 10f;
     static GridRow row1 = new(
+        new GridColumn(100f),
         new GridColumn(30f),
         new GridColumn(0f, true),
         new GridColumn(30f)
