@@ -1,28 +1,93 @@
-﻿using CommandLine;
-using GithubManager;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+﻿using Octokit;
+using Spectre.Console;
 
-var arguments = Parser.Default.ParseArguments<Options>(args);
-if (arguments.Errors.Any()) return;
+var githubToken = GetGitHubToken();
+var githubClient = new GitHubClient(new ProductHeaderValue("GitHubCLI")) {
+    Credentials = new Credentials(githubToken)
+};
 
-var client = new HttpClient();
-var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user/repos");
+AnsiConsole.Clear();
 
-request.Headers.Add("Authorization", $"Bearer {arguments.Value.Token}");
-request.Headers.Add("User-Agent", "a/a");
+var user = await githubClient.User.Current();
 
-var response = await client.SendAsync(request);
+while (true) {
+    var menu = AnsiConsole.Prompt(
+        new SelectionPrompt<string>()
+            .Title($"Welcome to GithubManager {user.Login}!")
+            .AddChoices("Add", "Delete", "Exit")
+    );
 
-response.EnsureSuccessStatusCode();
+    switch (menu) {
+        case "Add":
+            AddRepository(githubClient);
+            break;
+        case "Delete":
+            await SelectRepositoriesToDelete(githubClient);
+            break;
+        case "Exit":
+            goto end;
+    }
+}
 
-var json = await response.Content.ReadAsStringAsync();
+end:
+return;
 
-var jArray = JArray.Parse(json);
+static void AddRepository(IGitHubClient githubClient) {
+    var repositoryName = AnsiConsole.Ask<string>("Enter repository name: ");
+    var repositoryDescription = AnsiConsole.Ask<string>("Enter repository description: ");
+    var repository = new NewRepository(repositoryName) {
+        Description = repositoryDescription
+    };
+    var newRepository = githubClient.Repository.Create(repository).Result;
+    AnsiConsole.WriteLine($"Repository {newRepository.FullName} created successfully");
+}
 
-foreach (var token in jArray) {
-    var repo = JsonConvert.DeserializeObject<GithubRepository>(token.ToString());
-    if (!repo!.Owner.Login.Equals(arguments.Value.Username, StringComparison.CurrentCultureIgnoreCase)) continue;
+static string GetGitHubToken() {
+    Console.Write("Enter GitHub Token: ");
+    return Console.ReadLine();
+}
 
-    Console.WriteLine(repo.Name);
+static async Task SelectRepositoriesToDelete(IGitHubClient githubClient) {
+    var user = await githubClient.User.Current();
+    var repositories = await githubClient.Repository.GetAllForUser(user.Login);
+    var repositoryDictionary = repositories.ToDictionary(repo => $"{repo.Owner.Login}/{repo.Name}");
+    var repositoriesList = repositoryDictionary.Keys.ToList();
+    
+    List<string> selectedRepositories;
+
+    while (true) {
+        selectedRepositories = AnsiConsole.Prompt(
+            new MultiSelectionPrompt<string>()
+                .Title("[gray]Select repositories to delete[/]")
+                .NotRequired()
+                .PageSize(10)
+                .MoreChoicesText("[gray](Move up and down to reveal more repositories)[/]")
+                .InstructionsText(
+                    "[gray](Press [blue]<space>[/] to select a repository, [blue]<enter>[/] to confirm, [blue]<tab>[/] to go back)[/]")
+                .AddChoices(repositoriesList)
+        );
+
+        if (selectedRepositories.Count == 0) {
+            return;
+        }
+        
+        break;
+    }
+
+    foreach (var repoKey in selectedRepositories) {
+        if (!repositoryDictionary.TryGetValue(repoKey, out var repository)) continue;
+        AnsiConsole.WriteLine(repository.FullName);
+    }
+    
+    var confirmation = AnsiConsole.Confirm("Are you sure you want to delete the selected repositories?");
+    if (confirmation) {
+        foreach (var repoKey in selectedRepositories) {
+            if (!repositoryDictionary.TryGetValue(repoKey, out var repository)) continue;
+            AnsiConsole.WriteLine($"Deleting repository: {repository.FullName}");
+            await githubClient.Repository.Delete(repository.Id);
+        }
+    }
+    else {
+        AnsiConsole.WriteLine("Deletion cancelled");
+    }
 }
